@@ -556,3 +556,16 @@ async def set_threshold(interaction: discord.Interaction, xp_required: int, role
 
 if __name__ == "__main__":
     bot.run(TOKEN)
+
+@bot.command(name="balance", help="Zistí zostatok XP a level členov (iba pre Adminov a Moderátorov).")
+@commands.has_permissions(administrator=True) # Prípadne môžeš zmeniť na manage_roles=True alebo inú právo
+async def balance(ctx, member: discord.Member):
+    # Tu doplníš kód, ktorý vyberie dáta z tvojej SQLite databázy pre daného 'member'
+    # Napríklad ukážka odpovede:
+    await ctx.send(f"Užívateľ {member.mention} má nastavené XP/zostatok.")
+
+# Ošetrenie, ak príkaz použije niekto, kto nemá práva:
+@balance.error
+async def balance_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("Nemáš dostatočné oprávnenia na použitie tohto príkazu! (Len pre adminov/moderátorov).", delete_after=5)
