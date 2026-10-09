@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# --- DUMMY HTTP SERVER PRE RENDER (Aby nevyhadzoval chybu o portoch) ---
+# --- DUMMY HTTP SERVER PRE RENDER ---
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -20,18 +20,15 @@ def run_server():
     server = HTTPServer(('0.0.0.0', port), DummyHandler)
     server.serve_forever()
 
-# Spustíme HTTP server na pozadí, aby Render bol spokojný
 threading.Thread(target=run_server, daemon=True).start()
-# -----------------------------------------------------------------------
+# ------------------------------------
 
-# Load token from .env file
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 if not TOKEN:
     raise ValueError("ERROR: Bot token not found in .env file!")
 
-# Default Role Thresholds (XP roles only)
 DEFAULT_THRESHOLDS = [
     (150, "Officer"),
     (100, "Senior"),
@@ -42,9 +39,8 @@ VERIFIED_ROLE_NAME = "Verified"
 UNVERIFIED_ROLE_NAME = "Unverified"
 
 cooldowns = {}
-COOLDOWN_SECONDS = 600  # 10 minutes
+COOLDOWN_SECONDS = 600
 
-# Database Initialization
 def init_db():
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
@@ -265,7 +261,7 @@ class PTFSBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
 
-    async def setup_hook(self->None):
+    async def setup_hook(self):
         await self.tree.sync()
 
 bot = PTFSBot()
