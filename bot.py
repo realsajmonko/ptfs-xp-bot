@@ -1,10 +1,28 @@
 import os
 import sqlite3
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
+
+# --- DUMMY HTTP SERVER PRE RENDER (Aby nevyhadzoval chybu o portoch) ---
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_server():
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    server.serve_forever()
+
+# Spustíme HTTP server na pozadí, aby Render bol spokojný
+threading.Thread(target=run_server, daemon=True).start()
+# -----------------------------------------------------------------------
 
 # Load token from .env file
 load_dotenv()
@@ -20,11 +38,9 @@ DEFAULT_THRESHOLDS = [
     (50, "Cadet")
 ]
 
-# Permanent non-XP roles managed by verification/application
 VERIFIED_ROLE_NAME = "Verified"
 UNVERIFIED_ROLE_NAME = "Unverified"
 
-# Cooldown tracking dictionary: {user_id: timestamp_of_last_request}
 cooldowns = {}
 COOLDOWN_SECONDS = 600  # 10 minutes
 
@@ -48,7 +64,7 @@ def init_db():
     try:
         cursor.execute("ALTER TABLE config ADD COLUMN promo_channel_id INTEGER")
     except sqlite3.OperationalError:
-        pass  # Column already exists
+        pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS thresholds (
@@ -249,7 +265,7 @@ class PTFSBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
 
-    async def setup_hook(self):
+    async def setup_hook(self->None):
         await self.tree.sync()
 
 bot = PTFSBot()
