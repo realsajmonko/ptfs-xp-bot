@@ -557,15 +557,42 @@ async def set_threshold(interaction: discord.Interaction, xp_required: int, role
 if __name__ == "__main__":
     bot.run(TOKEN)
 
-@bot.command(name="balance", help="Zistí zostatok XP a level členov (iba pre Adminov a Moderátorov).")
-@commands.has_permissions(administrator=True) # Prípadne môžeš zmeniť na manage_roles=True alebo inú právo
-async def balance(ctx, member: discord.Member):
-    # Tu doplníš kód, ktorý vyberie dáta z tvojej SQLite databázy pre daného 'member'
-    # Napríklad ukážka odpovede:
-    await ctx.send(f"Užívateľ {member.mention} má nastavené XP/zostatok.")
+@bot.command(name="balance", help="Pozri si svoje XP alebo XP iného člena (admini/moderátori môžu pozerať aj iných).")
+async def balance(ctx, member: discord.Member = None):
+    # Ak nezadal člena, pozerá svoje vlastné XP
+    if member is None:
+        target_user = ctx.author
+    else:
+        # Ak chce pozrieť niekoho iného, overíme, či je admin alebo moderátor
+        is_admin = ctx.author.guild_permissions.administrator
+        is_mod = any(role.name in ["Moderátor", "Admin", "Mod"] for role in ctx.author.roles)
+        
+        if not is_admin and not is_mod:
+            await ctx.send("Nemáš oprávnenie pozerať zostatok iných členov!", delete_after=5)
+            return
+        target_user = member
 
-# Ošetrenie, ak príkaz použije niekto, kto nemá práva:
+    # Pripojenie k SQLite databáze a vyťahovanie XP
+    import sqlite3
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
+    
+    # Predpokladáme tabuľku 'users' so stĺpcami 'user_id' a 'xp' (uprav názvy, ak ich máš iné)
+    cursor.execute("SELECT xp FROM users WHERE user_id = ?", (target_user.id,))
+    result = cursor.fetchone()
+    
+    if result:
+        xp_zostatok = result[0]
+    else:
+        xp_zostatok = 0  # Ak užívateľ ešte nemá záznam v databáze
+        
+    conn.close()
+
+    # Odpoveď do chatu
+    await ctx.send(f"Užívateur **{target_user.display_name}** má aktuálne **{xp_zostatok} XP**.")
+
+# Ošetrenie chyby, ak by nastala
 @balance.error
 async def balance_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("Nemáš dostatočné oprávnenia na použitie tohto príkazu! (Len pre adminov/moderátorov).", delete_after=5)
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("Zadal si nesprávny formát príkazu.", delete_after=5)
