@@ -192,7 +192,6 @@ async def update_roles(member: discord.Member, new_xp: int, promoter: discord.ab
     thresholds = get_thresholds()
     all_xp_role_names = [role_name for _, role_name in thresholds]
     
-    # 1. Handle Verified & Unverified roles (Permanent verification upon getting XP/participating)
     verified_role = discord.utils.get(guild.roles, name=VERIFIED_ROLE_NAME)
     unverified_role = discord.utils.get(guild.roles, name=UNVERIFIED_ROLE_NAME)
     
@@ -204,7 +203,6 @@ async def update_roles(member: discord.Member, new_xp: int, promoter: discord.ab
     except discord.HTTPException:
         pass
 
-    # 2. Handle XP rank thresholds
     target_role_name = None
     for xp_req, role_name in thresholds:
         if new_xp >= xp_req:
@@ -269,6 +267,7 @@ class RejectReasonModal(discord.ui.Modal, title="Reject XP Request"):
         self.view = view
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         for child in self.view.children:
             child.disabled = True
 
@@ -289,7 +288,8 @@ class RejectReasonModal(discord.ui.Modal, title="Reject XP Request"):
         embed.add_field(name="Status", value=f"Rejected by {interaction.user.mention}", inline=False)
         embed.add_field(name="Rejection Reason", value=rejection_reason, inline=False)
 
-        await interaction.response.edit_message(embed=embed, view=self.view)
+        await interaction.message.edit(embed=embed, view=self.view)
+        await interaction.followup.send("Request successfully rejected.", ephemeral=True)
         await log_action(interaction.guild, f"❌ XP Request of **{self.view.xp_amount} XP** for <@{self.view.applicant_id}> was **rejected** by {interaction.user.mention}.\n**Reason:** {rejection_reason}")
 
 class XPRequestView(discord.ui.View):
@@ -300,6 +300,7 @@ class XPRequestView(discord.ui.View):
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.green, custom_id="approve_xp")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         for child in self.children:
             child.disabled = True
         
@@ -317,7 +318,8 @@ class XPRequestView(discord.ui.View):
         embed.color = discord.Color.green()
         embed.add_field(name="Status", value=f"Approved by {interaction.user.mention}", inline=False)
         
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.message.edit(embed=embed, view=self)
+        await interaction.followup.send("Request successfully approved.", ephemeral=True)
         await log_action(interaction.guild, f"✅ XP Request of **{self.xp_amount} XP** for <@{self.applicant_id}> was **approved** by {interaction.user.mention}. New total: **{new_xp} XP**.")
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.red, custom_id="reject_xp")
@@ -331,12 +333,14 @@ async def on_ready():
 
 @bot.tree.command(name="balance", description="Check your current XP balance.")
 async def balance(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     user_xp = get_xp(interaction.user.id)
-    await interaction.response.send_message(f"Your current balance is: **{user_xp} XP**", ephemeral=True)
+    await interaction.followup.send(f"Your current balance is: **{user_xp} XP**", ephemeral=True)
 
 @bot.tree.command(name="profile", description="View user XP profile and rank progress.")
 @app_commands.describe(member="The member whose profile you want to check (leave blank for yours)")
 async def profile(interaction: discord.Interaction, member: discord.Member = None):
+    await interaction.response.defer(ephemeral=True)
     target = member or interaction.user
     user_xp = get_xp(target.id)
     thresholds = get_thresholds()
@@ -370,10 +374,11 @@ async def profile(interaction: discord.Interaction, member: discord.Member = Non
     else:
         embed.add_field(name="Next Rank", value="You have reached the highest rank!", inline=False)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="leaderboard", description="Show the server XP leaderboard (Top 10).")
 async def leaderboard(interaction: discord.Interaction):
+    await interaction.response.defer()
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
     cursor.execute("SELECT user_id, xp FROM users ORDER BY xp DESC LIMIT 10")
@@ -391,109 +396,45 @@ async def leaderboard(interaction: discord.Interaction):
             desc += f"{medal} <@{uid}> — **{xp_val} XP**\n"
         embed.description = desc
 
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="xp-request", description="Request XP for completed training.")
-@app_commands.describe(
-    xp="Amount of XP requested",
-    reason="Reason for XP request (mandatory)",
-    proof_link="Link to screenshot/video proof (mandatory if no file uploaded)",
-    proof_file="Upload screenshot/video proof file (mandatory if no link provided)"
-)
-async def xp_request(
-    interaction: discord.Interaction, 
-    xp: int, 
-    reason: str, 
-    proof_link: str = None, 
-    proof_file: discord.Attachment = None
-):
-    is_privileged = interaction.user.guild_permissions.administrator or interaction.user.guild_permissions.manage_guild
-    if not is_privileged:
-        last_time = cooldowns.get(interaction.user.id, 0)
-        current_time = time.time()
-        elapsed = current_time - last_time
-        if elapsed < COOLDOWN_SECONDS:
-            remaining = int((COOLDOWN_SECONDS - elapsed) / 60) + 1
-            await interaction.response.send_message(f"⏳ Cooldown active! You must wait about **{remaining} more minutes** before submitting another XP request.", ephemeral=True)
-            return
-        cooldowns[interaction.user.id] = current_time
-
-    await interaction.response.defer(ephemeral=True)
-
-    if xp <= 0:
-        await interaction.followup.send("XP amount must be greater than 0.", ephemeral=True)
-        return
-
-    if not proof_link and not proof_file:
-        await interaction.followup.send("Error: You must provide either a proof link or upload a proof file!", ephemeral=True)
-        return
-
-    mod_channel_id, _, _ = get_config(interaction.guild.id)
-    mod_channel = interaction.guild.get_channel(mod_channel_id)
-    if not mod_channel:
-        await interaction.followup.send("Error: Moderator channel not found. Please contact an admin.", ephemeral=True)
-        return
-
-    embed = discord.Embed(
-        title="XP Request",
-        description=f"User {interaction.user.mention} requested **{xp} XP**.",
-        color=discord.Color.blue()
-    )
-    embed.add_field(name="Reason", value=reason, inline=False)
-
-    if proof_link:
-        embed.add_field(name="Proof (Link)", value=proof_link, inline=False)
-
-    if proof_file:
-        if proof_file.content_type and proof_file.content_type.startswith("image/"):
-            embed.set_image(url=proof_file.url)
-        else:
-            embed.add_field(name="Proof (File)", value=f"[{proof_file.filename}]({proof_file.url})", inline=False)
-
-    embed.set_footer(text=f"Applicant ID: {interaction.user.id}")
-
-    view = XPRequestView(applicant_id=interaction.user.id, xp_amount=xp)
-    
-    try:
-        await mod_channel.send(embed=embed, view=view)
-        await interaction.followup.send("Your XP request has been successfully submitted to the moderators.", ephemeral=True)
-    except discord.Forbidden:
-        await interaction.followup.send("Error: Bot lacks permission to send messages to the moderator channel.", ephemeral=True)
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="xp-add", description="[Admin] Manually add XP to a member.")
 @app_commands.describe(member="Member to add XP to", amount="Amount of XP to add", reason="Reason for adding XP (optional)")
 @app_commands.checks.has_permissions(administrator=True)
 async def xp_add(interaction: discord.Interaction, member: discord.Member, amount: int, reason: str = "No reason provided"):
+    await interaction.response.defer(ephemeral=True)
     if amount <= 0:
-        await interaction.response.send_message("Amount must be greater than 0.", ephemeral=True)
+        await interaction.followup.send("Amount must be greater than 0.", ephemeral=True)
         return
     new_xp = add_xp(member.id, amount)
     await update_roles(member, new_xp, promoter=interaction.user, reason=reason)
-    await interaction.response.send_message(f"Successfully added {amount} XP to {member.mention}. New total: **{new_xp} XP**", ephemeral=True)
+    await interaction.followup.send(f"Successfully added {amount} XP to {member.mention}. New total: **{new_xp} XP**", ephemeral=True)
     await log_action(interaction.guild, f"➕ Admin {interaction.user.mention} added **{amount} XP** to {member.mention}.\n**Reason:** {reason}\nNew total: **{new_xp} XP**.")
 
 @bot.tree.command(name="xp-remove", description="[Admin] Manually remove XP from a member.")
 @app_commands.describe(member="Member to remove XP from", amount="Amount of XP to remove", reason="Reason for removing XP (optional)")
 @app_commands.checks.has_permissions(administrator=True)
 async def xp_remove(interaction: discord.Interaction, member: discord.Member, amount: int, reason: str = "No reason provided"):
+    await interaction.response.defer(ephemeral=True)
     if amount <= 0:
-        await interaction.response.send_message("Amount must be greater than 0.", ephemeral=True)
+        await interaction.followup.send("Amount must be greater than 0.", ephemeral=True)
         return
     new_xp = add_xp(member.id, -amount)
     await update_roles(member, new_xp, promoter=interaction.user, reason=reason)
-    await interaction.response.send_message(f"Successfully removed {amount} XP from {member.mention}. New total: **{new_xp} XP**", ephemeral=True)
+    await interaction.followup.send(f"Successfully removed {amount} XP from {member.mention}. New total: **{new_xp} XP**", ephemeral=True)
     await log_action(interaction.guild, f"➖ Admin {interaction.user.mention} removed **{amount} XP** from {member.mention}.\n**Reason:** {reason}\nNew total: **{new_xp} XP**.")
 
 @bot.tree.command(name="xp-set", description="[Admin] Set exact XP balance for a member.")
 @app_commands.describe(member="Member to set XP for", amount="Exact XP amount", reason="Reason for setting XP (optional)")
 @app_commands.checks.has_permissions(administrator=True)
 async def xp_set(interaction: discord.Interaction, member: discord.Member, amount: int, reason: str = "No reason provided"):
+    await interaction.response.defer(ephemeral=True)
     if amount < 0:
-        await interaction.response.send_message("XP amount cannot be negative.", ephemeral=True)
+        await interaction.followup.send("XP amount cannot be negative.", ephemeral=True)
         return
     set_xp(member.id, amount)
     await update_roles(member, amount, promoter=interaction.user, reason=reason)
-    await interaction.response.send_message(f"Successfully set {member.mention}'s XP balance to **{amount} XP**.", ephemeral=True)
+    await interaction.followup.send(f"Successfully set {member.mention}'s XP balance to **{amount} XP**.", ephemeral=True)
     await log_action(interaction.guild, f"⚙️ Admin {interaction.user.mention} set {member.mention}'s XP balance to **{amount} XP**.\n**Reason:** {reason}")
 
 @bot.tree.command(name="set-mod-channel", description="[Admin] Set the channel where XP requests will arrive.")
